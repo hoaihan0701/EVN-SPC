@@ -1,8 +1,8 @@
 {
   "domain": "evnspc",
   "name": "EVNSPC Điện lực miền Nam",
-  "documentation": "https://github.com/your-repo/evnspc",
-  "requirements": ["requests"],
+  "documentation": "https://github.com/hoaihan0701/EVN-SPC",
+  "requirements": ["requests", "beautifulsoup4"],
   "codeowners": [],
   "config_flow": true,
   "iot_class": "cloud_polling",
