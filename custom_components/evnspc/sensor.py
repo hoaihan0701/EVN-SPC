@@ -23,7 +23,6 @@ async def async_setup_entry(
     coordinator = EvnSpcDataCoordinator(username, password, customer_code)
     await hass.async_add_executor_job(coordinator.update_data)
 
-    # Khởi tạo các thực thể sensor cơ bản
     sensors = [
         EvnSpcStartMeterSensor(coordinator, customer_code),
         EvnSpcCurrentMeterSensor(coordinator, customer_code),
@@ -39,7 +38,6 @@ async def async_setup_entry(
     
     async_add_entities(sensors, True)
 
-    # Đăng ký các service tra cứu tùy chỉnh nâng cao
     async def handle_tra_cuu_ngay(call):
         tu_ngay = call.data.get("tu_ngay")
         den_ngay = call.data.get("den_ngay")
@@ -74,10 +72,34 @@ class EvnSpcDataCoordinator:
         self.latest_bill_amount = 0
         self.start_meter = 0
         self.current_meter = 0
-        self.daily_consumption = {} # {"24/10/2026": {"kwh": 0.49, "meter": 12521.91}, ...}
+        self.daily_consumption = {}
+
+    def login(self):
+        try:
+            # Truy cập trang chủ trước để lấy antiforgery token nếu có
+            self.session.get(self.base_url, timeout=10)
+            
+            login_url = f"{self.base_url}/TaiKhoan/DangNhap"
+            payload = {
+                "UserName": self.username,
+                "Password": self.password
+            }
+            res = self.session.post(login_url, data=payload, timeout=10)
+            if res.status_code == 200:
+                _LOGGER.info("Đăng nhập EVNSPC thành công!")
+                return True
+            else:
+                _LOGGER.error(f"Đăng nhập EVNSPC thất bại, mã lỗi: {res.status_code}")
+        except Exception as e:
+            _LOGGER.error(f"Lỗi kết nối khi đăng nhập EVNSPC: {e}")
+        return False
 
     def update_data(self):
         try:
+            # Thực hiện đăng nhập lấy session trước khi cào dữ liệu
+            if not self.login():
+                return
+
             current_year = datetime.now().year
             current_month = datetime.now().month
             
@@ -88,7 +110,7 @@ class EvnSpcDataCoordinator:
                 data = res.json()
                 self.chart_data = data.get("ChartData", {})
 
-            # 2. Lấy thông tin hóa đơn tiền điện tháng hiện tại/gần nhất
+            # 2. Lấy thông tin hóa đơn tiền điện
             bill_url = f"{self.base_url}/TraCuu/ThongTinHoaDonTienDien"
             params = {"ky": "1", "thang": current_month, "nam": current_year}
             res_bill = self.session.get(bill_url, params=params, timeout=10)
@@ -133,7 +155,7 @@ class EvnSpcDataCoordinator:
                                 if len(tds) >= 4:
                                     ngay_val = tds[1].text.strip()
                                     chi_so_val = float(tds[2].text.strip().replace('.', '').replace(',', '.'))
-                                    san_luong_val = float(tds[3].text.strip().replace(',', '.'))
+                                    san_luong_val = float(tds[3].text.strip().replace('.', '').replace(',', '.'))
                                     
                                     self.daily_consumption[ngay_val] = {
                                         "kwh": san_luong_val,
@@ -142,8 +164,8 @@ class EvnSpcDataCoordinator:
                                     meter_values.append(chi_so_val)
                             
                             if meter_values:
-                                self.start_meter = meter_values[0]   # Chỉ số ngày đầu tiên trong kỳ
-                                self.current_meter = meter_values[-1] # Chỉ số ngày gần nhất (hôm qua)
+                                self.start_meter = meter_values[0]
+                                self.current_meter = meter_values[-1]
 
             _LOGGER.info("Cập nhật dữ liệu EVNSPC thành công!")
         except Exception as e:
@@ -204,7 +226,6 @@ class EvnSpcDataCoordinator:
         return {"amount": 0, "invoice_no": "Không tìm thấy"}
 
 
-# Khai báo các thực thể Sensor trên Home Assistant
 class EvnSpcStartMeterSensor(SensorEntity):
     def __init__(self, coordinator, customer_code):
         self._coordinator = coordinator
@@ -252,9 +273,7 @@ class EvnSpcConsumptionTodaySensor(SensorEntity):
         self._attr_icon = "mdi:lightning-bolt"
 
     def update(self) -> None:
-        today = datetime.now()
-        # Dữ liệu đo ghi xa thường cập nhật hết ngày hôm qua, hôm nay tạm lấy ngày gần nhất
-        yesterday = today - timedelta(days=1)
+        yesterday = datetime.now() - timedelta(days=1)
         self._attr_native_value = self._coordinator.get_data_by_date(yesterday)["kwh"]
 
 class EvnSpcConsumptionYesterdaySensor(SensorEntity):
