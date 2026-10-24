@@ -23,10 +23,15 @@ async def async_setup_entry(
     coordinator = EvnSpcDataCoordinator(username, password, customer_code)
     await hass.async_add_executor_job(coordinator.update_data)
 
+    # Khởi tạo các thực thể sensor cơ bản
     sensors = [
-        EvnSpcBillSensor(coordinator, customer_code),
+        EvnSpcStartMeterSensor(coordinator, customer_code),
+        EvnSpcCurrentMeterSensor(coordinator, customer_code),
+        EvnSpcEstimatedConsumptionSensor(coordinator, customer_code),
+        EvnSpcConsumptionTodaySensor(coordinator, customer_code),
         EvnSpcConsumptionYesterdaySensor(coordinator, customer_code),
         EvnSpcConsumptionBeforeYesterdaySensor(coordinator, customer_code),
+        EvnSpcLatestBillSensor(coordinator, customer_code),
     ] + [
         EvnSpcConsumptionMonthSensor(coordinator, customer_code, month)
         for month in range(1, 13)
@@ -34,23 +39,23 @@ async def async_setup_entry(
     
     async_add_entities(sensors, True)
 
-    # Đăng ký các service mở rộng phục vụ tra cứu linh hoạt theo yêu cầu
+    # Đăng ký các service tra cứu tùy chỉnh nâng cao
     async def handle_tra_cuu_ngay(call):
         tu_ngay = call.data.get("tu_ngay")
         den_ngay = call.data.get("den_ngay")
-        result = await hass.async_add_executor_job(coordinator.get_consumption_by_date_range, tu_ngay, den_ngay)
+        result, details = await hass.async_add_executor_job(coordinator.get_consumption_by_date_range, tu_ngay, den_ngay)
         hass.components.persistent_notification.create(
-            f"Sản lượng từ {tu_ngay} đến {den_ngay}: {result} kWh",
-            title="EVNSPC Tra Cứu Khoảng Ngày"
+            f"Tổng sản lượng từ {tu_ngay} đến {den_ngay}: **{result} kWh**\n\nChi tiết:\n{details}",
+            title="EVNSPC Tra Cứu Sản Lượng Khoảng Ngày"
         )
 
     async def handle_tra_cuu_hoa_don(call):
         thang = call.data.get("thang")
         nam = call.data.get("nam")
         ky = call.data.get("ky", 1)
-        bill = await hass.async_add_executor_job(coordinator.get_bill_by_period, ky, thang, nam)
+        bill_info = await hass.async_add_executor_job(coordinator.get_bill_detail_by_period, ky, thang, nam)
         hass.components.persistent_notification.create(
-            f"Hóa đơn Kỳ {ky}, Tháng {thang}/{nam}: {bill} VNĐ",
+            f"Hóa đơn Kỳ {ky}, Tháng {thang}/{nam}:\n- Tổng tiền: **{bill_info['amount']} VNĐ**\n- Số hóa đơn: {bill_info['invoice_no']}",
             title="EVNSPC Tra Cứu Hóa Đơn"
         )
 
@@ -67,7 +72,9 @@ class EvnSpcDataCoordinator:
         self.base_url = "https://cskh.evnspc.vn"
         self.chart_data = {}
         self.latest_bill_amount = 0
-        self.daily_consumption = {} # Lưu sản lượng theo ngày {"24/10/2026": 0.49, ...}
+        self.start_meter = 0
+        self.current_meter = 0
+        self.daily_consumption = {} # {"24/10/2026": {"kwh": 0.49, "meter": 12521.91}, ...}
 
     def update_data(self):
         try:
@@ -81,7 +88,7 @@ class EvnSpcDataCoordinator:
                 data = res.json()
                 self.chart_data = data.get("ChartData", {})
 
-            # 2. Lấy thông tin hóa đơn tiền điện
+            # 2. Lấy thông tin hóa đơn tiền điện tháng hiện tại/gần nhất
             bill_url = f"{self.base_url}/TraCuu/ThongTinHoaDonTienDien"
             params = {"ky": "1", "thang": current_month, "nam": current_year}
             res_bill = self.session.get(bill_url, params=params, timeout=10)
@@ -94,8 +101,7 @@ class EvnSpcDataCoordinator:
                         amount_str = cols[4].text.strip().replace('.', '').replace(',', '.')
                         self.latest_bill_amount = float(amount_str) if amount_str else 0
 
-            # 3. Lấy sản lượng tiêu thụ theo ngày (Mặc định lấy 30 ngày gần đây dựa theo API mới bắt)
-            # Trước tiên cần lấy mã điểm đo (MaDiemDo) bằng cách kiểm tra điểm đo
+            # 3. Lấy chỉ số công tơ và sản lượng ngày qua API đo ghi xa
             check_dd_url = f"{self.base_url}/TraCuu/KiemTraDiemDo"
             res_dd = self.session.post(check_dd_url, data={"MaDonVi": "", "MaKhachHang": self.customer_code}, timeout=10)
             if res_dd.status_code == 200:
@@ -105,34 +111,39 @@ class EvnSpcDataCoordinator:
                 
                 if ma_diem_do and loai_ddo in ["1", "3"]:
                     today = datetime.now()
-                    den_ngay = today - timedelta(days=1) # Dữ liệu đo ghi xa có đến ngày hôm qua
+                    den_ngay = today - timedelta(days=1)
                     tu_ngay = today - timedelta(days=35)
-                    
-                    ngay_str = tu_ngay.strftime("%d/%m/%Y")
-                    den_str = den_ngay.strftime("%d/%m/%Y")
                     
                     daily_url = f"{self.base_url}/TraCuu/GetChiSoVaDienNangNgay"
                     res_daily = self.session.post(daily_url, data={
                         "MaDiemDo": ma_diem_do,
-                        "TuNgay": ngay_str,
-                        "DenNgay": den_str,
+                        "TuNgay": tu_ngay.strftime("%d/%m/%Y"),
+                        "DenNgay": den_ngay.strftime("%d/%m/%Y"),
                         "SoPha": loai_ddo
                     }, timeout=10)
                     
                     if res_daily.status_code == 200:
-                        # Parse HTML trả về từ endpoint GetChiSoVaDienNangNgay
                         soup_d = BeautifulSoup(res_daily.text, 'html.parser')
-                        rows = soup_d.select('.search-quantity-box .result-tbl tbody tr')
-                        # Lưu ý bảng chi tiết nằm ở bảng thứ hai trong phần kết quả
                         tables = soup_d.select('.result-tbl')
                         if len(tables) >= 2:
                             tr_list = tables[1].select('tbody tr')
-                            for tr in tr_list:
+                            meter_values = []
+                            for idx, tr in enumerate(tr_list):
                                 tds = tr.find_all('td')
                                 if len(tds) >= 4:
                                     ngay_val = tds[1].text.strip()
+                                    chi_so_val = float(tds[2].text.strip().replace('.', '').replace(',', '.'))
                                     san_luong_val = float(tds[3].text.strip().replace(',', '.'))
-                                    self.daily_consumption[ngay_val] = san_luong_val
+                                    
+                                    self.daily_consumption[ngay_val] = {
+                                        "kwh": san_luong_val,
+                                        "meter": chi_so_val
+                                    }
+                                    meter_values.append(chi_so_val)
+                            
+                            if meter_values:
+                                self.start_meter = meter_values[0]   # Chỉ số ngày đầu tiên trong kỳ
+                                self.current_meter = meter_values[-1] # Chỉ số ngày gần nhất (hôm qua)
 
             _LOGGER.info("Cập nhật dữ liệu EVNSPC thành công!")
         except Exception as e:
@@ -150,28 +161,30 @@ class EvnSpcDataCoordinator:
             _LOGGER.error(f"Lỗi parse tháng {month}: {e}")
         return 0
 
-    def get_consumption_by_date(self, target_date: datetime):
+    def get_data_by_date(self, target_date: datetime):
         date_str = target_date.strftime("%d/%m/%Y")
-        return self.daily_consumption.get(date_str, 0)
+        return self.daily_consumption.get(date_str, {"kwh": 0, "meter": 0})
 
     def get_consumption_by_date_range(self, tu_ngay_str, den_ngay_str):
-        # tu_ngay_str, den_ngay_str định dạng dd/MM/yyyy hoặc dd-MM-yyyy
         try:
             t_date = datetime.strptime(tu_ngay_str.replace('-', '/'), "%d/%m/%Y")
             e_date = datetime.strptime(den_ngay_str.replace('-', '/'), "%d/%m/%Y")
             total = 0
             curr = t_date
+            details = ""
             while curr <= e_date:
-                total += self.get_consumption_by_date(curr)
+                data = self.get_data_by_date(curr)
+                total += data["kwh"]
+                details += f"- {curr.strftime('%d/%m/%Y')}: {data['kwh']} kWh (Chỉ số: {data['meter']})\n"
                 curr += timedelta(days=1)
-            return round(total, 2)
+            return round(total, 2), details
         except Exception as e:
             _LOGGER.error(f"Lỗi tính khoảng ngày: {e}")
-            return 0
+            return 0, "Lỗi định dạng ngày"
 
-    def get_bill_by_period(self, ky, thang, nam):
+    def get_bill_detail_by_period(self, ky, thang, nam):
         try:
-            bill_url = f"{self.base_url}/TraCuu/ThongTinHoaDonTienDien"
+            bill_url = f"{self.base_url}/TraCuu/HoaDonTienDien"
             params = {"ky": str(ky), "thang": str(thang), "nam": str(nam)}
             res = self.session.get(bill_url, params=params, timeout=10)
             if res.status_code == 200:
@@ -180,26 +193,69 @@ class EvnSpcDataCoordinator:
                 if row:
                     cols = row.find_all('td')
                     if len(cols) >= 5:
+                        invoice_no = cols[3].text.strip()
                         amount_str = cols[4].text.strip().replace('.', '').replace(',', '.')
-                        return float(amount_str) if amount_str else 0
+                        return {
+                            "amount": float(amount_str) if amount_str else 0,
+                            "invoice_no": invoice_no
+                        }
         except Exception as e:
             _LOGGER.error(f"Lỗi lấy hóa đơn kỳ {ky} tháng {thang}/{nam}: {e}")
-        return 0
+        return {"amount": 0, "invoice_no": "Không tìm thấy"}
 
 
-class EvnSpcBillSensor(SensorEntity):
+# Khai báo các thực thể Sensor trên Home Assistant
+class EvnSpcStartMeterSensor(SensorEntity):
     def __init__(self, coordinator, customer_code):
         self._coordinator = coordinator
         self._customer_code = customer_code
-        self._attr_name = f"EVNSPC Tiền Điện Tháng ({customer_code})"
-        self._attr_unique_id = f"evnspc_bill_{customer_code}"
-        self._attr_native_unit_of_measurement = "VND"
-        self._attr_icon = "mdi:cash-marker"
+        self._attr_name = f"EVNSPC Chỉ Số Đầu Kỳ ({customer_code})"
+        self._attr_unique_id = f"evnspc_start_meter_{customer_code}"
+        self._attr_icon = "mdi:counter"
 
     def update(self) -> None:
         self._coordinator.update_data()
-        self._attr_native_value = self._coordinator.latest_bill_amount
+        self._attr_native_value = self._coordinator.start_meter
 
+class EvnSpcCurrentMeterSensor(SensorEntity):
+    def __init__(self, coordinator, customer_code):
+        self._coordinator = coordinator
+        self._customer_code = customer_code
+        self._attr_name = f"EVNSPC Chỉ Số Hiện Tại ({customer_code})"
+        self._attr_unique_id = f"evnspc_current_meter_{customer_code}"
+        self._attr_icon = "mdi:counter"
+
+    def update(self) -> None:
+        self._coordinator.update_data()
+        self._attr_native_value = self._coordinator.current_meter
+
+class EvnSpcEstimatedConsumptionSensor(SensorEntity):
+    def __init__(self, coordinator, customer_code):
+        self._coordinator = coordinator
+        self._customer_code = customer_code
+        self._attr_name = f"EVNSPC Tiêu Thụ Tạm Tính Tháng ({customer_code})"
+        self._attr_unique_id = f"evnspc_estimated_consumption_{customer_code}"
+        self._attr_native_unit_of_measurement = "kWh"
+        self._attr_icon = "mdi:flash-outline"
+
+    def update(self) -> None:
+        self._coordinator.update_data()
+        self._attr_native_value = round(max(0, self._coordinator.current_meter - self._coordinator.start_meter), 2)
+
+class EvnSpcConsumptionTodaySensor(SensorEntity):
+    def __init__(self, coordinator, customer_code):
+        self._coordinator = coordinator
+        self._customer_code = customer_code
+        self._attr_name = f"EVNSPC Tiêu Thụ Hôm Nay ({customer_code})"
+        self._attr_unique_id = f"evnspc_consumption_today_{customer_code}"
+        self._attr_native_unit_of_measurement = "kWh"
+        self._attr_icon = "mdi:lightning-bolt"
+
+    def update(self) -> None:
+        today = datetime.now()
+        # Dữ liệu đo ghi xa thường cập nhật hết ngày hôm qua, hôm nay tạm lấy ngày gần nhất
+        yesterday = today - timedelta(days=1)
+        self._attr_native_value = self._coordinator.get_data_by_date(yesterday)["kwh"]
 
 class EvnSpcConsumptionYesterdaySensor(SensorEntity):
     def __init__(self, coordinator, customer_code):
@@ -212,8 +268,7 @@ class EvnSpcConsumptionYesterdaySensor(SensorEntity):
 
     def update(self) -> None:
         yesterday = datetime.now() - timedelta(days=1)
-        self._attr_native_value = self._coordinator.get_consumption_by_date(yesterday)
-
+        self._attr_native_value = self._coordinator.get_data_by_date(yesterday)["kwh"]
 
 class EvnSpcConsumptionBeforeYesterdaySensor(SensorEntity):
     def __init__(self, coordinator, customer_code):
@@ -226,8 +281,19 @@ class EvnSpcConsumptionBeforeYesterdaySensor(SensorEntity):
 
     def update(self) -> None:
         before_yesterday = datetime.now() - timedelta(days=2)
-        self._attr_native_value = self._coordinator.get_consumption_by_date(before_yesterday)
+        self._attr_native_value = self._coordinator.get_data_by_date(before_yesterday)["kwh"]
 
+class EvnSpcLatestBillSensor(SensorEntity):
+    def __init__(self, coordinator, customer_code):
+        self._coordinator = coordinator
+        self._customer_code = customer_code
+        self._attr_name = f"EVNSPC Tiền Điện Tháng Gần Nhất ({customer_code})"
+        self._attr_unique_id = f"evnspc_latest_bill_{customer_code}"
+        self._attr_native_unit_of_measurement = "VND"
+        self._attr_icon = "mdi:cash-marker"
+
+    def update(self) -> None:
+        self._attr_native_value = self._coordinator.latest_bill_amount
 
 class EvnSpcConsumptionMonthSensor(SensorEntity):
     def __init__(self, coordinator, customer_code, month):
@@ -237,7 +303,7 @@ class EvnSpcConsumptionMonthSensor(SensorEntity):
         self._attr_name = f"EVNSPC Tiêu Thụ Tháng {month} ({customer_code})"
         self._attr_unique_id = f"evnspc_consumption_month_{month}_{customer_code}"
         self._attr_native_unit_of_measurement = "kWh"
-        self._attr_icon = "mdi:lightning-bolt"
+        self._attr_icon = "mdi:chart-bar"
 
     def update(self) -> None:
         self._attr_native_value = self._coordinator.get_consumption_by_month(self._month)
