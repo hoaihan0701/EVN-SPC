@@ -67,53 +67,92 @@ class EvnSpcDataCoordinator:
         self.password = password
         self.customer_code = customer_code
         self.session = requests.Session()
+        self.session.headers.update({
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
+        })
         self.base_url = "https://cskh.evnspc.vn"
         self.chart_data = {}
         self.latest_bill_amount = 0
         self.start_meter = 0
         self.current_meter = 0
         self.daily_consumption = {}
+        self.is_logged_in = False
 
     def login(self):
         try:
-            # Truy cập trang chủ trước để lấy antiforgery token nếu có
-            self.session.get(self.base_url, timeout=10)
+            # Tạo mới Session để xóa toàn bộ Cookie hết hạn cũ
+            self.session = requests.Session()
+            self.session.headers.update({
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+            })
             
-            login_url = f"{self.base_url}/TaiKhoan/DangNhap"
-            payload = {
-                "UserName": self.username,
-                "Password": self.password
+            # 1. Truy cập trang đăng nhập để lấy Token chống giả mạo và khởi tạo Cookie session
+            res_page = self.session.get(f"{self.base_url}/TaiKhoan/DangNhapHeThong", timeout=10)
+            soup = BeautifulSoup(res_page.text, 'html.parser')
+            token_input = soup.select_one('#faceAntiForgeryToken')
+            token = token_input.get('value') if token_input else ""
+
+            # 2. Gửi request đăng nhập API theo đúng luồng hệ thống
+            login_url = f"{self.base_url}/TaiKhoan/Login"
+            headers = {
+                "RequestVerificationToken": token,
+                "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+                "X-Requested-With": "XMLHttpRequest",
+                "Referer": f"{self.base_url}/TaiKhoan/DangNhapHeThong"
             }
-            res = self.session.post(login_url, data=payload, timeout=10)
+            payload = {
+                "username": self.username,
+                "password": self.password,
+                "previousLink": "/TraCuu/HoaDonTienDien"
+            }
+            res = self.session.post(login_url, data=payload, headers=headers, timeout=10)
             if res.status_code == 200:
-                _LOGGER.info("Đăng nhập EVNSPC thành công!")
-                return True
-            else:
-                _LOGGER.error(f"Đăng nhập EVNSPC thất bại, mã lỗi: {res.status_code}")
+                data = res.json()
+                if str(data.get("KetQua")) != "0":
+                    _LOGGER.info("Tạo mới phiên làm việc EVNSPC thành công!")
+                    self.is_logged_in = True
+                    return True
+                else:
+                    _LOGGER.error(f"Đăng nhập thất bại: {data.get('ThongBao')}")
+            
+            self.is_logged_in = False
         except Exception as e:
-            _LOGGER.error(f"Lỗi kết nối khi đăng nhập EVNSPC: {e}")
+            _LOGGER.error(f"Lỗi khi thực hiện đăng nhập lại EVNSPC: {e}")
+            self.is_logged_in = False
         return False
+
+    def ensure_authenticated_request(self, method, url, **kwargs):
+        """Hàm kiểm tra phiên: Tự động đăng nhập lại nếu phát hiện hết hạn session"""
+        if not self.is_logged_in:
+            self.login()
+
+        res = self.session.request(method, url, **kwargs)
+        
+        # Nếu bị đẩy về trang đăng nhập do hết hạn session
+        if res.status_code == 200 and ("DangNhap" in res.url or "faceAntiForgeryToken" in res.text):
+            _LOGGER.warning("Phiên đăng nhập EVNSPC hết hạn. Đang thực hiện tái đăng nhập...")
+            if self.login():
+                res = self.session.request(method, url, **kwargs)
+        
+        return res
 
     def update_data(self):
         try:
-            # Thực hiện đăng nhập lấy session trước khi cào dữ liệu
-            if not self.login():
-                return
-
             current_year = datetime.now().year
             current_month = datetime.now().month
             
             # 1. Lấy dữ liệu biểu đồ tiêu thụ điện theo tháng
             chart_url = f"{self.base_url}/TraCuu/GetCombinedThongTinChiSo?timNam={current_year}"
-            res = self.session.get(chart_url, timeout=10)
-            if res.status_code == 200:
+            res = self.ensure_authenticated_request("GET", chart_url, timeout=10)
+            if res.status_code == 200 and res.text.startswith("{"):
                 data = res.json()
                 self.chart_data = data.get("ChartData", {})
 
             # 2. Lấy thông tin hóa đơn tiền điện
             bill_url = f"{self.base_url}/TraCuu/ThongTinHoaDonTienDien"
             params = {"ky": "1", "thang": current_month, "nam": current_year}
-            res_bill = self.session.get(bill_url, params=params, timeout=10)
+            res_bill = self.ensure_authenticated_request("GET", bill_url, params=params, timeout=10)
             if res_bill.status_code == 200:
                 soup = BeautifulSoup(res_bill.text, 'html.parser')
                 row = soup.select_one('.result-tbl tbody tr')
@@ -125,8 +164,8 @@ class EvnSpcDataCoordinator:
 
             # 3. Lấy chỉ số công tơ và sản lượng ngày qua API đo ghi xa
             check_dd_url = f"{self.base_url}/TraCuu/KiemTraDiemDo"
-            res_dd = self.session.post(check_dd_url, data={"MaDonVi": "", "MaKhachHang": self.customer_code}, timeout=10)
-            if res_dd.status_code == 200:
+            res_dd = self.ensure_authenticated_request("POST", check_dd_url, data={"MaDonVi": "", "MaKhachHang": self.customer_code}, timeout=10)
+            if res_dd.status_code == 200 and res_dd.text.startswith("{"):
                 dd_data = res_dd.json()
                 ma_diem_do = dd_data.get("MA_DDO", "").strip()
                 loai_ddo = dd_data.get("LOAI_DDO", "0").strip()
@@ -137,7 +176,7 @@ class EvnSpcDataCoordinator:
                     tu_ngay = today - timedelta(days=35)
                     
                     daily_url = f"{self.base_url}/TraCuu/GetChiSoVaDienNangNgay"
-                    res_daily = self.session.post(daily_url, data={
+                    res_daily = self.ensure_authenticated_request("POST", daily_url, data={
                         "MaDiemDo": ma_diem_do,
                         "TuNgay": tu_ngay.strftime("%d/%m/%Y"),
                         "DenNgay": den_ngay.strftime("%d/%m/%Y"),
@@ -208,7 +247,7 @@ class EvnSpcDataCoordinator:
         try:
             bill_url = f"{self.base_url}/TraCuu/HoaDonTienDien"
             params = {"ky": str(ky), "thang": str(thang), "nam": str(nam)}
-            res = self.session.get(bill_url, params=params, timeout=10)
+            res = self.ensure_authenticated_request("GET", bill_url, params=params, timeout=10)
             if res.status_code == 200:
                 soup = BeautifulSoup(res.text, 'html.parser')
                 row = soup.select_one('.result-tbl tbody tr')
