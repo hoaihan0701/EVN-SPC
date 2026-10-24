@@ -1,0 +1,22 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "data": {
+          "username": "Tên đăng nhập (Email / SĐT)",
+          "password": "Mật khẩu",
+          "customer_code": "Mã khách hàng (PB...)"
+        },
+        "data_description": {
+          "customer_code": "Nhập mã khách hàng điện lực của anh (ví dụ: PB01100025197)"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Đăng nhập thất bại! Vui lòng kiểm tra lại Tên đăng nhập hoặc Mật khẩu."
+    },
+    "abort": {
+      "already_configured": "Tài khoản này đã được cấu hình trước đó."
+    }
+  }
+}
