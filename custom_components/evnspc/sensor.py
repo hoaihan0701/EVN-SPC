@@ -87,34 +87,45 @@ class EvnSpcDataCoordinator:
                 "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
             })
             
-            # 1. Truy cập trang đăng nhập để lấy Token chống giả mạo và khởi tạo Cookie session
-            res_page = self.session.get(f"{self.base_url}/TaiKhoan/DangNhapHeThong", timeout=10)
+            # 1. Truy cập trực tiếp trang đăng nhập chuyên biệt /TaiKhoan/DangNhap
+            login_page_url = f"{self.base_url}/TaiKhoan/DangNhap"
+            res_page = self.session.get(login_page_url, timeout=10)
             soup = BeautifulSoup(res_page.text, 'html.parser')
-            token_input = soup.select_one('#faceAntiForgeryToken')
+            
+            # Lấy token chống giả mạo từ form đăng nhập thực tế
+            token_input = soup.select_one('input[name="__RequestVerificationToken"]') or soup.select_one('#faceAntiForgeryToken')
             token = token_input.get('value') if token_input else ""
 
-            # 2. Gửi request đăng nhập API theo đúng luồng hệ thống
-            login_url = f"{self.base_url}/TaiKhoan/Login"
+            # 2. Gửi request POST trực tiếp tới endpoint đăng nhập
             headers = {
                 "RequestVerificationToken": token,
                 "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
                 "X-Requested-With": "XMLHttpRequest",
-                "Referer": f"{self.base_url}/TaiKhoan/DangNhapHeThong"
+                "Referer": login_page_url
             }
             payload = {
                 "username": self.username,
                 "password": self.password,
                 "previousLink": "/TraCuu/HoaDonTienDien"
             }
-            res = self.session.post(login_url, data=payload, headers=headers, timeout=10)
+            res = self.session.post(login_page_url, data=payload, headers=headers, timeout=10)
+            
             if res.status_code == 200:
-                data = res.json()
-                if str(data.get("KetQua")) != "0":
+                if "DangNhap" not in res.url:
                     _LOGGER.info("Tạo mới phiên làm việc EVNSPC thành công!")
                     self.is_logged_in = True
                     return True
                 else:
-                    _LOGGER.error(f"Đăng nhập thất bại: {data.get('ThongBao')}")
+                    try:
+                        data = res.json()
+                        if str(data.get("KetQua")) != "0":
+                            _LOGGER.info("Tạo mới phiên làm việc EVNSPC thành công!")
+                            self.is_logged_in = True
+                            return True
+                        else:
+                            _LOGGER.error(f"Đăng nhập thất bại: {data.get('ThongBao')}")
+                    except Exception:
+                        _LOGGER.error("Đăng nhập EVNSPC thất bại do bị chuyển hướng về trang đăng nhập.")
             
             self.is_logged_in = False
         except Exception as e:
