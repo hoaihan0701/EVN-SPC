@@ -1,0 +1,61 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "EVNSPC customer portal login",
+        "description": "Enter the account registered at https://cskh.evnspc.vn and your 13-character customer code (e.g. PB0xxxxxxxxxxx).",
+        "data": {
+          "username": "Username",
+          "password": "Password",
+          "customer_code": "Customer code"
+        }
+      },
+      "captcha": {
+        "title": "Enter captcha",
+        "description": "{captcha_image}\n\nType the 6 characters shown in the image.",
+        "data": {
+          "captcha": "Captcha"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Sign in to EVNSPC again",
+        "description": "The session for {customer_code} has expired.\n\n{captcha_image}\n\nEnter the captcha to continue.",
+        "data": {
+          "password": "Password",
+          "captcha": "Captcha"
+        }
+      }
+    },
+    "error": {
+      "invalid_captcha": "Wrong captcha, try the new image.",
+      "invalid_auth": "Wrong username or password.",
+      "invalid_customer_code": "Invalid customer code (PB/PC/PK/GK prefix, 13 characters).",
+      "cannot_connect": "Cannot reach cskh.evnspc.vn.",
+      "unknown": "Unknown error, see the log."
+    },
+    "abort": {
+      "already_configured": "This customer code is already configured.",
+      "no_remote_reading": "This customer code has no remote-reading data, so no daily output is available.",
+      "password_change_required": "The website requires a password change. Sign in on the web, change it, then retry.",
+      "reauth_successful": "Re-authentication successful."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "EVNSPC options",
+        "data": {
+          "scan_interval_minutes": "Update interval (minutes)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "daily_kwh": { "name": "Latest daily consumption" },
+      "meter_index": { "name": "Meter index" },
+      "month_kwh": { "name": "Consumption this month" },
+      "week_kwh": { "name": "Consumption last 7 days" }
+    }
+  }
+}

@@ -1,0 +1,61 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Đăng nhập CSKH EVNSPC",
+        "description": "Nhập tài khoản đã đăng ký trên https://cskh.evnspc.vn và mã khách hàng (13 ký tự, ví dụ PB0xxxxxxxxxxx).",
+        "data": {
+          "username": "Tên đăng nhập",
+          "password": "Mật khẩu",
+          "customer_code": "Mã khách hàng"
+        }
+      },
+      "captcha": {
+        "title": "Nhập captcha",
+        "description": "{captcha_image}\n\nNhập chính xác 6 ký tự trong ảnh để đăng nhập.",
+        "data": {
+          "captcha": "Mã captcha"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Đăng nhập lại EVNSPC",
+        "description": "Phiên đăng nhập của mã {customer_code} đã hết hạn.\n\n{captcha_image}\n\nNhập lại captcha để tiếp tục.",
+        "data": {
+          "password": "Mật khẩu",
+          "captcha": "Mã captcha"
+        }
+      }
+    },
+    "error": {
+      "invalid_captcha": "Captcha sai, hãy thử với ảnh mới.",
+      "invalid_auth": "Sai tên đăng nhập hoặc mật khẩu.",
+      "invalid_customer_code": "Mã khách hàng không hợp lệ (bắt đầu bằng PB/PC/PK/GK, đủ 13 ký tự).",
+      "cannot_connect": "Không kết nối được tới cskh.evnspc.vn.",
+      "unknown": "Lỗi không xác định, xem log để biết thêm."
+    },
+    "abort": {
+      "already_configured": "Mã khách hàng này đã được thêm.",
+      "no_remote_reading": "Mã khách hàng này chưa có dữ liệu đo ghi xa nên không có sản lượng theo ngày.",
+      "password_change_required": "Website yêu cầu đổi mật khẩu. Hãy đăng nhập trên web, đổi mật khẩu rồi thử lại.",
+      "reauth_successful": "Đăng nhập lại thành công."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Tùy chọn EVNSPC",
+        "data": {
+          "scan_interval_minutes": "Chu kỳ cập nhật (phút)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "daily_kwh": { "name": "Sản lượng ngày gần nhất" },
+      "meter_index": { "name": "Chỉ số công tơ" },
+      "month_kwh": { "name": "Sản lượng tháng này" },
+      "week_kwh": { "name": "Sản lượng 7 ngày gần nhất" }
+    }
+  }
+}

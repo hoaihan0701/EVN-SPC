@@ -1,0 +1,15 @@
+{
+  "domain": "evnspc",
+  "name": "EVNSPC - Điện lực miền Nam",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["recorder"],
+  "documentation": "https://github.com/your-name/ha-evnspc",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/your-name/ha-evnspc/issues",
+  "requirements": [
+    "ddddocr==1.4.11"
+  ],
+  "version": "0.1.1"
+}
